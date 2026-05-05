@@ -1,0 +1,12 @@
+name: shiny
+title: shiny
+username: saurabhparate
+account: saurabhparate
+server: shinyapps.io
+hostUrl: https://api.shinyapps.io/v1
+appId: 17297324
+bundleId: 11950444
+url: https://saurabhparate.shinyapps.io/shiny/
+version: 1
+asMultiple: FALSE
+asStatic: FALSE

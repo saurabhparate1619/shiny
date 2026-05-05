@@ -1,0 +1,32 @@
+{
+    "id": "6703E1B0",
+    "path": "D:/R/shiny/shiny/shiny.qmd",
+    "project_path": "shiny.qmd",
+    "type": "quarto_markdown",
+    "hash": "4216364428",
+    "contents": "",
+    "dirty": false,
+    "created": 1777965591661.0,
+    "source_on_save": false,
+    "relative_order": 1,
+    "properties": {
+        "rmdVisualMode": "true",
+        "rmdVisualWrapConfigured": "true",
+        "tempName": "Untitled1",
+        "source_window_id": "",
+        "Source": "Source",
+        "cursorPosition": "161,0",
+        "scrollLine": "151",
+        "docOutlineVisible": "1",
+        "rmdVisualCollapsedChunks": "",
+        "rmdVisualModeLocation": "5221:3128"
+    },
+    "folds": "",
+    "lastKnownWriteTime": 1777967978,
+    "encoding": "UTF-8",
+    "collab_server": "",
+    "source_window": "",
+    "last_content_update": 1777967978513,
+    "read_only": false,
+    "read_only_alternatives": []
+}

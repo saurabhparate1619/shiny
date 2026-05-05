@@ -1,0 +1,174 @@
+---
+title: "W10-Dashboards Assignment"
+subtitle: "Transportation Key Metrics Dashboard"
+author: "Saurabh Parate"
+date: today
+
+format:
+  html:
+    toc: true
+    toc-depth: 3
+    toc-expand: true
+    embed-resources: true
+    theme: cosmo
+    code-fold: true
+
+execute:
+  echo: true
+  warning: false
+  message: false
+---
+
+# Project 1: Static Dashboard
+
+## Project Description
+
+This project uses monthly transportation key metrics to understand how passenger activity and other performance indicators changed over time. The goal of the static dashboard is to help the audience quickly identify long-term trends, seasonal patterns, and differences between key transportation metrics.
+
+The dashboard is designed for users who may not have a technical background. It presents simple visual summaries that explain how transportation performance changed by month and year.
+
+## Data Description
+
+The dataset used for this project is `pnfs_key_metrics_long.csv`. The data is organized in long format, meaning each row represents one metric for one month.
+
+The main variables are:
+
+- `year`: year of the observation
+- `month_num`: month number
+- `month`: month abbreviation
+- `date`: monthly date
+- `metric_raw`: original metric name
+- `metric`: cleaned metric name
+- `value`: numeric value of the metric
+- `source_sheet`: source year/sheet
+
+```{r}
+library(tidyverse)
+library(scales)
+
+data <- read.csv("pnfs_key_metrics_long.csv")
+
+data <- data |>
+  mutate(
+    date = as.Date(date),
+    year = as.factor(year),
+    metric = as.factor(metric)
+  )
+
+head(data)
+```
+
+```{r}
+# Data summary
+summary(data)
+```
+
+```{r}
+# Number of available metrics
+data |>
+  distinct(metric)
+```
+
+```{r}
+# Chart 1: Overall trends by metric
+ggplot(data, aes(x = date, y = value, color = metric)) +
+  geom_line(linewidth = 1) +
+  labs(
+    title = "Transportation Key Metrics Over Time",
+    x = "Date",
+    y = "Value",
+    color = "Metric"
+  ) +
+  scale_y_continuous(labels = comma) +
+  theme_minimal()
+```
+
+```{r}
+# Chart 2: Total passengers trend
+data |>
+  filter(metric == "Total Passengers") |>
+  ggplot(aes(x = date, y = value)) +
+  geom_line(linewidth = 1) +
+  geom_point(size = 2) +
+  labs(
+    title = "Total Passengers Over Time",
+    x = "Date",
+    y = "Total Passengers"
+  ) +
+  scale_y_continuous(labels = comma) +
+  theme_minimal()
+```
+
+```{r}
+# Chart 3: Average value by year and metric
+data |>
+  group_by(year, metric) |>
+  summarise(avg_value = mean(value, na.rm = TRUE), .groups = "drop") |>
+  ggplot(aes(x = year, y = avg_value, fill = metric)) +
+  geom_col(position = "dodge") +
+  labs(
+    title = "Average Metric Value by Year",
+    x = "Year",
+    y = "Average Value",
+    fill = "Metric"
+  ) +
+  scale_y_continuous(labels = comma) +
+  theme_minimal()
+```
+
+```{r}
+# Chart 4: Monthly pattern for total passengers
+data |>
+  filter(metric == "Total Passengers") |>
+  group_by(month_num, month) |>
+  summarise(avg_passengers = mean(value, na.rm = TRUE), .groups = "drop") |>
+  arrange(month_num) |>
+  ggplot(aes(x = reorder(month, month_num), y = avg_passengers, group = 1)) +
+  geom_line(linewidth = 1) +
+  geom_point(size = 2) +
+  labs(
+    title = "Average Monthly Passenger Pattern",
+    x = "Month",
+    y = "Average Total Passengers"
+  ) +
+  scale_y_continuous(labels = comma) +
+  theme_minimal()
+```
+
+## Findings from the Data
+
+The dashboard shows that transportation activity changes over time and that some months have higher values than others. Total passengers appear to be an important indicator because it directly reflects the volume of people using the transportation system.
+
+The yearly comparison helps show whether transportation activity increased or decreased across different years. The monthly pattern also helps identify seasonal changes, which may be useful for planning staffing, service levels, and marketing communication.
+
+## Interpretation of the Dashboard Charts
+
+The first chart compares all available metrics over time and provides a broad overview of transportation performance.
+
+The second chart focuses specifically on total passengers. This chart is useful because passenger volume is one of the clearest ways to understand demand.
+
+The third chart compares average metric values by year. This helps the audience understand whether yearly performance improved or declined.
+
+The fourth chart shows the average monthly passenger pattern. This helps identify months with stronger or weaker passenger activity.
+
+# Project 2: Interactive Shiny App
+
+## Project Description
+
+The second project creates an interactive Shiny application using the same transportation key metrics dataset. The purpose of the app is to allow users to explore transportation trends by selecting different metrics and date ranges.
+
+Unlike the static dashboard, the Shiny app allows the audience to interact with the data. Users can choose which metric they want to analyze, filter the time period, and view trends dynamically.
+
+## Data Description
+
+The Shiny app uses the `pnfs_key_metrics_long.csv` dataset. The app is built around three key fields:
+
+- `date`: used for date filtering
+
+- `metric`: used for selecting different variables
+
+- `value`: used for plotting trends
+
+This structure is appropriate for an interactive dashboard because users can filter by time and choose which metric they want to explore.
+
+<https://saurabhparate.shinyapps.io/shiny/>
