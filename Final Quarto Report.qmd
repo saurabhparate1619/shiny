@@ -1,308 +1,500 @@
 ---
-title: "Final Client Analytics Report"
-subtitle: "Google Analytics Sample Ecommerce Performance"
-author: "Group Ontario Airport"
+title: "Ecommerce Funnel & Attribution Analysis"
+subtitle: "IBM 6530 · Deliverable 2 — Final Quarto Report"
+author: "Bansi Khachar, Matthew Prado, Lucynda Young, Saurabh Parate"
+date: today
 format:
   html:
     toc: true
     toc-depth: 3
+    toc-title: "Contents"
     theme: cosmo
+    code-fold: true
+    code-summary: "Show code"
+    embed-resources: true
+    smooth-scroll: true
 execute:
   echo: true
   warning: false
   message: false
 ---
 
-# Executive Summary
+---
 
-This report analyzes ecommerce website performance using the Google Analytics Sample dataset in BigQuery. The goal is to identify which acquisition sources, devices, and markets drive the strongest traffic, revenue, and conversion outcomes.
+## Narrative Summary of the Business Problem
 
-Key findings:
+The client operates an ecommerce platform struggling to convert site visitors into paying customers. On January 31, 2021, the platform generated **26,489 events** from **2,546 distinct users**, yet only **17 purchases** were completed — a conversion rate of just **0.7%**.
 
-- The site generated strong overall traffic, but conversion efficiency varied by source and device.
-- Revenue was concentrated among a small number of traffic sources.
-- Some sources drove high sessions but weaker conversion rates, suggesting lower traffic quality.
-- Desktop users generated higher revenue than other device categories.
-- Attribution results suggest that last-touch source performance may overstate channels that appear near the end of the customer journey.
+The data reveals that users are actively engaging with the platform but are abandoning the funnel at multiple stages before reaching purchase. The core business problem is not a lack of traffic; it is a broken conversion architecture that is leaking potential revenue at every stage of the funnel, with the most severe losses occurring at the product discovery stage.
 
-# Business Problem
+**Why it matters:**
 
-The client needs to understand which traffic sources and audience segments are contributing most to ecommerce performance. The business question is:
+- High traffic with low conversion signals a disconnect between user intent and purchase completion
+- Unidentified drop-off points make it impossible to allocate marketing spend efficiently
+- Without attribution data, the business cannot determine which funnel stages drive the most conversions
 
-**Which acquisition sources should the client prioritize to improve revenue and conversion efficiency?**
+---
 
-# Data Source and Pipeline
+## Setup & Data Connection
 
-The analysis uses the public BigQuery table:
-
-``` r
-bigquery-public-data.google_analytics_sample.ga_sessions_*
-```
-
-```{r}
+```{r setup}
+library(DBI)
 library(bigrquery)
 library(dplyr)
+library(dbplyr)
 library(ggplot2)
 library(scales)
-library(DT)
+library(knitr)
+library(kableExtra)
+library(ChannelAttribution)
+library(tidyr)
+library(htmltools)
+
+bigrquery::bq_auth(
+  scopes = "https://www.googleapis.com/auth/bigquery"
+)
 
 project_id <- "ga4-analysis-491223"
+
+mart_project <- "bigquery-public-data"
+mart_dataset <- "ga4_obfuscated_sample_ecommerce"
+mart_view <- "events_20210131"
+
+con <- DBI::dbConnect(
+  bigrquery::bigquery(),
+  project = mart_project,
+  dataset = mart_dataset,
+  billing = project_id
+)
+
+mart_tbl <- dplyr::tbl(con, mart_view)
 ```
 
-```{r}
-project_id <- "ga4-analysis-491223"
-```
-
-```{r}
-sql <- "
-SELECT
-  PARSE_DATE('%Y%m%d', date) AS session_date,
-  trafficSource.source AS source,
-  trafficSource.medium AS medium,
-  device.deviceCategory AS device_category,
-  geoNetwork.country AS country,
-
-  COUNT(DISTINCT fullVisitorId) AS users,
-  COUNT(DISTINCT CONCAT(fullVisitorId, CAST(visitId AS STRING))) AS sessions,
-
-  SUM(IFNULL(totals.pageviews, 0)) AS pageviews,
-  SUM(IFNULL(totals.transactions, 0)) AS transactions,
-  SUM(IFNULL(totals.transactionRevenue, 0)) / 1000000 AS revenue
-
-FROM `bigquery-public-data.google_analytics_sample.ga_sessions_*`
-
-WHERE _TABLE_SUFFIX BETWEEN '20160801' AND '20170801'
-
-GROUP BY
-  session_date,
-  source,
-  medium,
-  device_category,
-  country
-"
-
-ga_mart <- bq_project_query(project_id, sql) |>
-  bq_table_download()
-```
+---
 
 ## Descriptive Insights
 
-```{r}
-daily <- ga_mart |>
-  group_by(session_date) |>
-  summarise(
-    users = sum(users, na.rm = TRUE),
-    sessions = sum(sessions, na.rm = TRUE),
-    pageviews = sum(pageviews, na.rm = TRUE),
-    transactions = sum(transactions, na.rm = TRUE),
-    revenue = sum(revenue, na.rm = TRUE),
-    .groups = "drop"
-  ) |>
-  mutate(
-    conversion_rate = transactions / sessions,
-    revenue_per_session = revenue / sessions
-  )
+### Core KPIs
 
-total_users <- sum(daily$users, na.rm = TRUE)
-total_sessions <- sum(daily$sessions, na.rm = TRUE)
-total_transactions <- sum(daily$transactions, na.rm = TRUE)
-total_revenue <- sum(daily$revenue, na.rm = TRUE)
-overall_conversion_rate <- total_transactions / total_sessions
-revenue_per_session <- total_revenue / total_sessions
+```{r kpis}
+kpis <- mart_tbl |>
+  summarise(
+    total_events   = n(),
+    distinct_users = n_distinct(user_pseudo_id),
+    purchases      = sum(as.integer(event_name == "purchase"), na.rm = TRUE)
+  ) |>
+  collect() |>
+  mutate(cvr = paste0(round(purchases / distinct_users * 100, 1), "%"))
+
+kpis |>
+  kable(
+    col.names = c("Total Events", "Distinct Users", "Purchases", "CVR"),
+    align     = "c",
+    caption   = "Core KPIs — GA4 Obfuscated Sample, Jan 31 2021"
+  ) |>
+  kable_styling(full_width = FALSE, bootstrap_options = c("striped", "hover"))
 ```
 
-## KPI Summary
+**Interpretation:** The platform recorded 26,489 total events from 2,546 distinct users but completed only 17 purchases, giving an overall conversion rate of 0.7%. Fewer than 1 in 100 users who visited the site ended up buying something.
 
-```{r}
-kpi_summary <- tibble(
-  metric = c(
-    "Users",
-    "Sessions",
-    "Transactions",
-    "Revenue",
-    "Conversion Rate",
-    "Revenue per Session"
-  ),
-  value = c(
-    comma(total_users),
-    comma(total_sessions),
-    comma(total_transactions),
-    dollar(total_revenue),
-    percent(overall_conversion_rate, accuracy = 0.1),
-    dollar(revenue_per_session)
+---
+
+### Funnel Performance
+
+```{r funnel-table}
+funnel_order <- c("page_view", "view_item", "add_to_cart",
+                  "begin_checkout", "purchase")
+
+funnel <- mart_tbl |>
+  filter(event_name %in% funnel_order) |>
+  group_by(event_name) |>
+  summarise(users = n_distinct(user_pseudo_id)) |>
+  collect() |>
+  mutate(event_name = factor(event_name, levels = funnel_order)) |>
+  arrange(event_name) |>
+  mutate(
+    cvr     = paste0(round(users / first(users) * 100, 1), "%"),
+    dropoff = paste0(round(
+      (1 - users / lag(users, default = first(users))) * 100, 1
+    ), "%")
+  )
+
+funnel |>
+  kable(
+    col.names = c("Event", "Users", "CVR", "Drop-off"),
+    align     = "c",
+    caption   = "Funnel Performance — Distinct Users by Stage"
+  ) |>
+  kable_styling(full_width = FALSE, bootstrap_options = c("striped", "hover")) |>
+  row_spec(2, color = "#a32d2d") |>
+  row_spec(3, color = "#a32d2d") |>
+  row_spec(5, color = "#a32d2d")
+```
+
+**Key findings:**
+
+- The steepest drop-off occurs between `page_view` and `view_item` at **78.4%** — nearly 4 in 5 users who landed on the site never engaged with a product
+- A second critical drop-off of **81.8%** occurs between `view_item` and `add_to_cart` — users who found a product still overwhelmingly chose not to act on it
+- The final drop between `begin_checkout` and `purchase` is **68.5%** — more than two thirds of users with clear purchase intent abandoned at the last step
+
+---
+
+### Funnel Bar Chart
+
+```{r funnel-chart, fig.width=8, fig.height=4}
+ggplot(funnel, aes(x = event_name, y = users)) +
+  geom_col(fill = "#2563EB", width = 0.6) +
+  geom_text(
+    aes(label = scales::comma(users)),
+    vjust = -0.5, size = 3.5, color = "#374151"
+  ) +
+  scale_x_discrete(
+    labels = c("Page View", "View Item", "Add to Cart",
+               "Begin Checkout", "Purchase")
+  ) +
+  scale_y_continuous(
+    labels = scales::comma,
+    expand = expansion(mult = c(0, 0.15))
+  ) +
+  labs(
+    title    = "Ecommerce Funnel — Distinct Users by Stage",
+    subtitle = "GA4 Obfuscated Sample | Jan 31, 2021",
+    x        = NULL,
+    y        = "Distinct Users"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    plot.title    = element_text(face = "bold", size = 13),
+    plot.subtitle = element_text(color = "#6B7280", size = 10),
+    axis.text     = element_text(color = "#6B7280"),
+    panel.grid.major.x = element_blank()
+  )
+```
+
+**Interpretation:** The bar chart makes the funnel collapse immediately visible. The dramatic drop from 2,499 page views to 539 product views is the single biggest opportunity — most users are bouncing before they ever see a product.
+
+---
+
+## Advanced Analysis — Attribution
+
+### Methodology
+
+```{r attribution-build}
+# Step 1 — pull purchaser IDs into local memory
+purchaser_ids <- mart_tbl |>
+  filter(event_name == "purchase") |>
+  select(user_pseudo_id) |>
+  distinct() |>
+  collect() |>
+  pull(user_pseudo_id)
+
+# Step 2 — pull all funnel events for converting users
+purchasers <- mart_tbl |>
+  filter(
+    user_pseudo_id %in% purchaser_ids,
+    event_name     %in% funnel_order
+  ) |>
+  select(user_pseudo_id, event_name) |>
+  collect()
+
+# Step 3 — build channel_stack for ChannelAttribution
+channel_stack <- purchasers |>
+  group_by(user_pseudo_id) |>
+  summarise(
+    cleaned_path = paste(event_name, collapse = ">"),
+    .groups      = "drop"
+  ) |>
+  mutate(
+    conversion     = 1,
+    non_conversion = 0
+  ) |>
+  group_by(cleaned_path) |>
+  summarise(
+    conversion     = sum(conversion),
+    non_conversion = sum(non_conversion),
+    .groups        = "drop"
+  )
+```
+
+**Unit of analysis:** Individual user session tracked via `user_pseudo_id`, defined as any event path from `page_view` to `purchase`.
+
+**Touchpoints:** `page_view` → `view_item` → `add_to_cart` → `begin_checkout` → `purchase`
+
+**Model used:** Markov Chain Attribution (Order 1) — models transition probabilities between each funnel stage and estimates each stage's contribution using a removal effect. More reliable than first-touch or last-touch because it accounts for the full journey.
+
+---
+
+### First-Touch & Last-Touch Attribution
+
+```{r heuristic}
+heuristic_results <- heuristic_models(
+  channel_stack,
+  var_path = "cleaned_path",
+  var_conv = "conversion",
+  sep      = ">"
+)
+
+heuristic_results |>
+  select(channel_name, first_touch, last_touch) |>
+  kable(
+    col.names = c("Funnel Stage", "First-Touch", "Last-Touch"),
+    digits    = 3,
+    align     = "c",
+    caption   = "Heuristic Attribution — Conversion Counts by Model"
+  ) |>
+  kable_styling(full_width = FALSE, bootstrap_options = c("striped", "hover"))
+```
+
+**Interpretation:** First-touch assigns all 17 conversions to `page_view` because every buyer started there. Last-touch gives 14 of 17 to `view_item` because that was typically the final step. Neither model tells the full story — one only sees entry, the other only sees exit.
+
+---
+
+### Markov Chain Attribution
+
+```{r markov}
+markov <- markov_model(
+  channel_stack,
+  var_path = "cleaned_path",
+  var_conv = "conversion",
+  var_null = "non_conversion",
+  order    = 1,
+  sep      = ">"
+)
+
+table_markov <- data.frame(
+  channel           = markov$channel_name,
+  total_conversions = round(markov$total_conversions),
+  percent           = round(
+    markov$total_conversions / sum(channel_stack$conversion) * 100, 1
   )
 )
 
-kpi_summary
+table_markov |>
+  kable(
+    col.names = c("Funnel Stage", "Attributed Conversions", "% Share"),
+    align     = "c",
+    caption   = "Markov Chain Attribution Results"
+  ) |>
+  kable_styling(full_width = FALSE, bootstrap_options = c("striped", "hover"))
 ```
 
-## Sessions Over Time
+**Interpretation:** The Markov model distributes credit relatively evenly across all five stages, confirming that every touchpoint plays a meaningful role. `page_view` (26.4%) and `view_item` (25.9%) carry the highest combined weight at over 52% of total attributed credit, reinforcing that the top of the funnel is where the most conversion influence lies.
 
-```{r}
-ggplot(daily, aes(x = session_date, y = sessions)) +
-  geom_line(linewidth = 1) +
-  scale_y_continuous(labels = comma) +
-  labs(
-    title = "Sessions Over Time",
-    x = "Date",
-    y = "Sessions"
-  ) +
-  theme_minimal()
+---
+
+### Model Comparison
+
+```{r model-comparison}
+model_comparison <- heuristic_results |>
+  select(channel_name, first_touch, last_touch) |>
+  left_join(
+    table_markov |> select(channel, percent),
+    by = c("channel_name" = "channel")
+  ) |>
+  rename(
+    `Funnel Stage` = channel_name,
+    `First-Touch`  = first_touch,
+    `Last-Touch`   = last_touch,
+    `Markov (%)`   = percent
+  )
+
+model_comparison |>
+  kable(digits = 3, align = "c",
+        caption = "Attribution Model Comparison") |>
+  kable_styling(full_width = FALSE, bootstrap_options = c("striped", "hover"))
 ```
 
-## Revenue Over Time
+---
 
-```{r}
-ggplot(daily, aes(x = session_date, y = revenue)) +
-  geom_line(linewidth = 1) +
-  scale_y_continuous(labels = dollar) +
-  labs(
-    title = "Revenue Over Time",
-    x = "Date",
-    y = "Revenue"
-  ) +
-  theme_minimal()
-```
+### Attribution Model Comparison Chart
 
-## Source Performance
-
-```{r}
-source_perf <- ga_mart |>
-  group_by(source, medium) |>
-  summarise(
-    users = sum(users, na.rm = TRUE),
-    sessions = sum(sessions, na.rm = TRUE),
-    transactions = sum(transactions, na.rm = TRUE),
-    revenue = sum(revenue, na.rm = TRUE),
-    .groups = "drop"
+```{r model-chart, fig.width=8, fig.height=4}
+plot_data <- heuristic_results |>
+  select(channel_name, first_touch, last_touch) |>
+  left_join(
+    table_markov |>
+      mutate(markov = percent / 100) |>
+      select(channel, markov),
+    by = c("channel_name" = "channel")
+  ) |>
+  tidyr::pivot_longer(
+    cols      = c(first_touch, last_touch, markov),
+    names_to  = "model",
+    values_to = "value"
   ) |>
   mutate(
-    conversion_rate = transactions / sessions,
-    revenue_per_session = revenue / sessions
-  ) |>
-  arrange(desc(revenue))
+    model        = dplyr::recode(model,
+      first_touch = "First-Touch",
+      last_touch  = "Last-Touch",
+      markov      = "Markov Chain"
+    ),
+    channel_name = factor(channel_name, levels = funnel_order)
+  )
 
-source_perf |>
-  slice_head(n = 10)
-```
-
-```{r}
-source_perf |>
-  slice_head(n = 10) |>
-  ggplot(aes(x = reorder(source, revenue), y = revenue)) +
-  geom_col() +
-  coord_flip() +
-  scale_y_continuous(labels = dollar) +
+ggplot(plot_data, aes(x = model, y = value, fill = channel_name)) +
+  geom_col(position = "fill", width = 0.55) +
+  scale_y_continuous(labels = scales::percent_format()) +
+  scale_fill_manual(values = c(
+    "page_view"      = "#2563EB",
+    "view_item"      = "#059669",
+    "add_to_cart"    = "#7C3AED",
+    "begin_checkout" = "#D97706",
+    "purchase"       = "#6B7280"
+  )) +
   labs(
-    title = "Top Traffic Sources by Revenue",
-    x = "Traffic Source",
-    y = "Revenue"
+    title = "Attribution model comparison — share by funnel stage",
+    x     = "Attribution Model",
+    y     = "Share of Attributed Conversions",
+    fill  = "Funnel Stage"
   ) +
-  theme_minimal()
+  theme_minimal(base_size = 12) +
+  theme(
+    plot.title         = element_text(face = "bold", size = 13),
+    panel.grid.major.x = element_blank(),
+    axis.text          = element_text(color = "#6B7280")
+  )
 ```
 
-## Advanced Analysis: Attribution
+---
 
-Because this dataset is session-level, this report uses last-touch session attribution. Each session is credited to the source and medium attached to that visit. This is appropriate for evaluating which sources directly preceded ecommerce outcomes, but it does not fully capture earlier awareness or assist channels.
+### Transition Matrix Heatmap
 
-```{r}
-attribution <- source_perf |>
-  mutate(
-    revenue_share = revenue / sum(revenue, na.rm = TRUE),
-    transaction_share = transactions / sum(transactions, na.rm = TRUE),
-    session_share = sessions / sum(sessions, na.rm = TRUE)
-  ) |>
-  arrange(desc(revenue_share))
+```{r transition-heatmap, fig.width=7, fig.height=5}
+trans_1st <- transition_matrix(
+  channel_stack,
+  var_path = "cleaned_path",
+  var_conv = "conversion",
+  var_null = "non_conversion",
+  order    = 1,
+  sep      = ">"
+)
 
-attribution |>
-  select(
-    source,
-    medium,
-    sessions,
-    transactions,
-    revenue,
-    session_share,
-    transaction_share,
-    revenue_share,
-    conversion_rate,
-    revenue_per_session
-  ) |>
-  slice_head(n = 10)
-```
-
-```{r}
-attribution |>
-  slice_head(n = 10) |>
-  ggplot(aes(x = reorder(source, revenue_share), y = revenue_share)) +
-  geom_col() +
-  coord_flip() +
-  scale_y_continuous(labels = percent) +
+ggplot(
+  trans_1st$transition_matrix,
+  aes(x = channel_to, y = channel_from, fill = transition_probability)
+) +
+  geom_tile(color = "white", linewidth = 1) +
+  geom_text(
+    aes(label = round(transition_probability, 2)),
+    size = 4, color = "#1a1a1a"
+  ) +
+  scale_fill_gradient(low = "#DBEAFE", high = "#1D4ED8") +
   labs(
-    title = "Last-Touch Revenue Attribution by Source",
-    subtitle = "Share of total revenue credited to each traffic source",
-    x = "Traffic Source",
-    y = "Revenue Share"
+    title = "Funnel transition matrix",
+    x     = "Next stage",
+    y     = "Previous stage",
+    fill  = "Transition\nProbability"
   ) +
-  theme_minimal()
+  theme_minimal(base_size = 11) +
+  theme(
+    plot.title   = element_text(face = "bold", size = 13),
+    axis.text.x  = element_text(angle = 30, hjust = 1, color = "#6B7280"),
+    axis.text.y  = element_text(color = "#6B7280"),
+    panel.grid   = element_blank()
+  )
 ```
 
-## Device Analysis
+**Interpretation:** The heatmap shows the probability of a user moving from one funnel stage to the next. Darker blue cells indicate stronger transitions. Any light-colored cells on the conversion diagonal show where transition probability is weak — those are your highest-priority friction points.
 
-```{r}
-device_perf <- ga_mart |>
-  group_by(device_category) |>
-  summarise(
-    sessions = sum(sessions, na.rm = TRUE),
-    transactions = sum(transactions, na.rm = TRUE),
-    revenue = sum(revenue, na.rm = TRUE),
-    .groups = "drop"
-  ) |>
-  mutate(
-    conversion_rate = transactions / sessions,
-    revenue_per_session = revenue / sessions
-  ) |>
-  arrange(desc(revenue))
+---
 
-device_perf
+## Recommendations
+
+### Recommendation 1 — Fix Landing-to-Product Discovery Drop-off
+
+The **78.4% drop** between `page_view` and `view_item` is the highest-priority problem. Of 2,499 users who landed on the site, only 539 ever viewed a product. Most users are bouncing before they engage with any product at all.
+
+**Actions:**
+
+- Add prominent product categories and featured items above the fold
+- Improve internal search and filtering so users find relevant products quickly
+- A/B test homepage layouts to identify which entry points drive the most `view_item` events
+
+**Expected impact:** A 10-point improvement adds approximately 250 more users into the product funnel, more than doubling the downstream conversion pool.
+
+---
+
+### Recommendation 2 — Optimize the Product Detail Page
+
+Of the 539 users who viewed a product, only 98 added one to their cart — an **81.8% drop-off**. Users are reaching the product but not acting on it.
+
+**Actions:**
+
+- Add customer reviews and star ratings to all product pages
+- Introduce urgency signals such as low stock indicators or limited-time offers
+- Rewrite product descriptions to lead with benefits rather than features
+- A/B test CTA button copy, size, and placement
+
+**Expected impact:** A 10-point improvement increases add-to-cart users from 98 to approximately 152, directly expanding the checkout pool.
+
+---
+
+### Recommendation 3 — Reduce Checkout Abandonment
+
+Of the 54 users who began checkout, only 17 completed a purchase — a **68.5% abandonment rate**. These users had clear purchase intent, so the barrier is the checkout process itself.
+
+**Actions:**
+
+- Implement guest checkout to remove account creation friction
+- Reduce required form fields to the minimum necessary
+- Display security badges, accepted payment methods, and return policy prominently
+- Ensure checkout is fully optimized for mobile
+
+**Expected impact:** Reducing abandonment by 20 points would increase purchases from 17 to approximately 27, lifting CVR from 0.7% to approximately 1.1%.
+
+---
+
+## Limitations
+
+| Limitation | Detail |
+|---|---|
+| **Single-day snapshot** | Covers only Jan 31, 2021. Cannot account for seasonal variation, day-of-week effects, or campaign cycles. All findings are directional. |
+| **Anonymized users** | `user_pseudo_id` does not persist across devices. One real user on mobile and desktop counts as two, inflating distinct user counts and deflating true CVR. |
+| **No channel data** | Without source and medium attribution, it is impossible to determine whether paid, organic, direct, or referral traffic converts differently. |
+| **Small purchase sample** | 17 purchases carry high statistical uncertainty. Results should not be treated as definitive without replication across a broader time window. |
+| **Shapley values undefined** | All 17 converting users passed through identical funnel stages, leaving no variation to calculate marginal contribution. A minimum of 50–100 conversions with varied paths is needed. |
+
+---
+
+## Reproducible Code & Instructions
+
+### Requirements
+
+Install the following R packages before rendering:
+
+```r
+install.packages(c(
+  "bigrquery", "dplyr", "dbplyr", "ggplot2",
+  "scales", "knitr", "kableExtra",
+  "ChannelAttribution", "tidyr", "DBI", "htmltools"
+))
 ```
 
-```{r}
-ggplot(device_perf, aes(x = reorder(device_category, revenue), y = revenue)) +
-  geom_col() +
-  coord_flip() +
-  scale_y_continuous(labels = dollar) +
-  labs(
-    title = "Revenue by Device Category",
-    x = "Device Category",
-    y = "Revenue"
-  ) +
-  theme_minimal()
+### Authentication
+
+```r
+bigrquery::bq_auth(
+  scopes = "https://www.googleapis.com/auth/bigquery"
+)
 ```
 
-# Recommendations
+Authenticate with the Google account that has BigQuery read access on the `bigquery-489601` project.
 
-1.  **Prioritize high-revenue, high-conversion sources.**\
-    Sources that produce both revenue and strong conversion rates should receive priority in campaign planning.
+### Render
 
-2.  **Investigate high-traffic, low-conversion sources.**\
-    Sources with many sessions but weak conversion rates may need landing page improvements, better audience targeting, or clearer product messaging.
+From your terminal in the project directory:
 
-3.  **Use revenue per session as a traffic quality metric.**\
-    Session volume alone can be misleading. Revenue per session better reflects the business value of traffic.
+```bash
+quarto render Deliverable_2_Final.qmd
+```
 
-4.  **Optimize device experiences based on revenue performance.**\
-    If desktop generates stronger revenue, mobile performance should be reviewed for checkout friction, page speed, or usability issues.
+Or from RStudio: open the file and click **Render**.
 
-# Limitations
+### Repository
 
-- This analysis uses the public Google Analytics sample dataset, not a live client account.
+All code, data connections, and rendered outputs are available at:
+[https://github.com/MattPradoCalPoly/project-IBM6530](https://github.com/MattPradoCalPoly/project-IBM6530)
 
-- The attribution model is last-touch session attribution.
-
-- The report does not include paid media cost, so ROAS cannot be calculated.
-
-- Users may be counted across multiple source, device, or country groups.
-
-- Revenue is based only on ecommerce transaction fields available in the export.
-
-- The analysis does not prove causality; it identifies performance patterns.
+```{r close}
+DBI::dbDisconnect(con)
+```
