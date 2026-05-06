@@ -6,15 +6,15 @@ date: today
 format:
   revealjs:
     theme: simple
-    slide-number: true
+    fontsize: 1.2em
+    slide-number: c/t
     progress: true
     transition: fade
     transition-speed: fast
     background-transition: fade
-    highlight-style: github
-    code-fold: true
     embed-resources: true
-    css: custom_slides.css
+    footer: "IBM 6530 · Ecommerce Attribution Analysis"
+    fig-align: center
 execute:
   echo: false
   warning: false
@@ -22,6 +22,7 @@ execute:
 ---
 
 ```{r setup}
+#| include: false
 library(dplyr)
 library(ggplot2)
 library(scales)
@@ -33,384 +34,481 @@ funnel_order <- c("page_view", "view_item", "add_to_cart",
 
 funnel <- data.frame(
   event_name = factor(funnel_order, levels = funnel_order),
-  users      = c(2499, 539, 98, 54, 17),
-  cvr        = c("100%", "21.6%", "3.9%", "2.2%", "0.7%"),
-  dropoff    = c("—", "78.4%", "81.8%", "44.9%", "68.5%")
+  users      = c(2499, 539, 98, 54, 17)
 )
 
 table_markov <- data.frame(
-  channel           = c("page_view","view_item","add_to_cart",
-                        "begin_checkout","purchase"),
-  total_conversions = c(4, 4, 4, 3, 2),
-  percent           = c(26.4, 25.9, 21.2, 15.1, 11.4)
+  channel = factor(funnel_order, levels = funnel_order),
+  percent = c(26.4, 25.9, 21.2, 15.1, 11.4)
 )
 
+# Shared chart theme — white background, consistent sizes
 theme_slide <- function() {
   theme_minimal(base_size = 14) +
     theme(
       plot.title         = element_text(face = "bold", size = 15,
-                                        color = "#111827", margin = margin(b = 6)),
-      plot.subtitle      = element_text(size = 12, color = "#6B7280",
+                                        color = "#1E3A5F",
+                                        margin = margin(b = 4)),
+      plot.subtitle      = element_text(size = 12.5, color = "#4B5563",
                                         margin = margin(b = 10)),
-      axis.text          = element_text(size = 11, color = "#6B7280"),
+      axis.text          = element_text(size = 12, color = "#374151"),
       axis.title         = element_blank(),
       panel.grid.major.x = element_blank(),
-      panel.grid.major.y = element_line(color = "#F3F4F6", linewidth = 0.5),
+      panel.grid.major.y = element_line(color = "#E5E7EB", linewidth = 0.4),
       panel.grid.minor   = element_blank(),
       plot.background    = element_rect(fill = "white", color = NA),
       panel.background   = element_rect(fill = "white", color = NA),
-      plot.margin        = margin(10, 16, 8, 16)
+      plot.margin        = margin(8, 14, 6, 14)
     )
 }
 
-C_BLUE   <- "#2563EB"
-C_GREEN  <- "#059669"
-C_PURPLE <- "#7C3AED"
-C_AMBER  <- "#D97706"
-C_RED    <- "#DC2626"
+BLUE <- "#1E3A5F"
+ACC  <- "#2563EB"
 ```
 
-## The Business Problem {background-color="#1E3A5F"}
+## The Business Problem {background-color="#F8FAFC"}
 
-::::: columns
+::: columns
 ::: {.column width="55%"}
-### The challenge
-
 An ecommerce platform is generating strong traffic but converting almost none of it into revenue.
 
-Despite **2,546 users** visiting on a single day, only **17 purchases** were completed.
+Despite **2,546 distinct users** visiting on a single day, only **17 purchases** were completed.
 
-> **Overall CVR: 0.7%**
+<br>
+
+::: {style="background:#DBEAFE; border-left:5px solid #1E3A5F; padding:14px 18px; border-radius:0 8px 8px 0;"}
+**Overall CVR: 0.7%** — fewer than 1 in 100 visitors completes a purchase
+:::
 :::
 
 ::: {.column width="45%"}
-### Why it matters
+**Why it matters**
 
--   Revenue is being lost at every funnel stage
--   Without knowing *where* users drop off, budget cannot be allocated efficiently
--   Without attribution, the business cannot identify which touchpoints drive conversions
+- Revenue is being lost at every funnel stage
+- Without knowing where users drop off, marketing budget cannot be allocated efficiently
+- Without attribution, the business cannot identify which touchpoints drive conversions
 :::
-:::::
+:::
 
-------------------------------------------------------------------------
+---
 
 ## Project Objectives {background-color="#F8FAFC"}
 
 ::: incremental
-1.  **Identify and quantify** drop-off points across the ecommerce conversion funnel
-2.  **Build a stakeholder-ready dashboard** tracking KPIs with clean BigQuery mart logic
-3.  **Apply attribution analysis** to determine which funnel stages have the greatest influence on purchase completion
-4.  **Deliver actionable recommendations** to improve the 0.7% conversion rate
+1. **Identify and quantify** drop-off points across the purchase funnel using GA4 + BigQuery
+2. **Build a stakeholder-ready dashboard** with clean mart logic and correct KPI definitions
+3. **Apply attribution analysis** to determine which funnel stages most influence purchase completion
+4. **Deliver actionable recommendations** to improve the 0.7% conversion rate
 :::
 
-------------------------------------------------------------------------
+---
 
 ## Data & Methodology {background-color="#F8FAFC"}
 
-::::: columns
+::: columns
 ::: {.column width="50%"}
-**Data Source**
+**Data source**
 
--   GA4 Obfuscated Sample
--   BigQuery Public Dataset
--   Single-day snapshot: Jan 31, 2021
--   Accessed via `bigrquery` + `dbplyr`
+- GA4 Obfuscated Sample
+- BigQuery Public Dataset
+- Single-day snapshot: Jan 31, 2021
+- Accessed via `bigrquery` + `dbplyr` in R
+
+<br>
+
+**Tools**
+
+- R · BigQuery · ChannelAttribution
+- Quarto · Looker Studio
 :::
 
 ::: {.column width="50%"}
-**Analytical Framework**
+**Analytical components**
 
-| Component        | Purpose        |
-|------------------|----------------|
-| Descriptive      | KPIs + funnel  |
-| Funnel analysis  | Drop-off rates |
-| Markov Chain     | Attribution    |
-| Heuristic models | Comparison     |
+| Component | Purpose |
+|:--|:--|
+| Descriptive | KPIs + funnel rates |
+| Funnel analysis | Drop-off by stage |
+| Markov Chain | Attribution model |
+| Heuristic models | First / last touch |
 :::
-:::::
+:::
 
-------------------------------------------------------------------------
+---
 
 ## Core KPIs {background-color="#F8FAFC"}
 
-:::::: columns
+::: columns
 ::: {.column width="20%"}
 :::
 
 ::: {.column width="60%"}
-| Metric          |    Value |
-|:----------------|---------:|
-| Total Events    |   26,489 |
-| Distinct Users  |    2,546 |
-| Purchases       |       17 |
-| **Overall CVR** | **0.7%** |
+| Metric | Value |
+|:--|--:|
+| Total Events | 26,489 |
+| Distinct Users | 2,546 |
+| Purchases | **17** |
+| Overall CVR | **0.7%** |
 :::
 
 ::: {.column width="20%"}
 :::
-::::::
-
-::: fragment
-> The platform generates **\~10 events per user per session** — engagement is not the problem. Conversion is.
 :::
 
-------------------------------------------------------------------------
+<br>
+
+::: {style="background:#DBEAFE; border-left:5px solid #1E3A5F; padding:12px 16px; border-radius:0 8px 8px 0;"}
+The platform generates roughly **10 events per user** per session — engagement is not the problem. Conversion is.
+:::
+
+---
 
 ## Funnel Performance {background-color="#F8FAFC"}
 
-```{r funnel-chart, fig.width=9, fig.height=4.5}
+```{r funnel-chart}
+#| fig-width: 9
+#| fig-height: 4.2
+#| fig-alt: "Bar chart of ecommerce funnel. page_view 2499 users, view_item 539, add_to_cart 98, begin_checkout 54, purchase 17. Each stage drops sharply from the previous."
+
 ggplot(funnel, aes(x = event_name, y = users)) +
-  geom_col(fill = C_BLUE, width = 0.6) +
-  geom_text(aes(label = scales::comma(users)),
-            vjust = -0.5, size = 4, color = "#374151") +
-  scale_x_discrete(labels = c("Page View","View Item",
-                               "Add to Cart","Begin Checkout","Purchase")) +
-  scale_y_continuous(labels = scales::comma,
-                     expand  = expansion(mult = c(0, 0.15))) +
-  labs(title    = "Distinct users by funnel stage",
-       subtitle = "GA4 Obfuscated Sample | Jan 31, 2021") +
+  geom_col(fill = BLUE, width = 0.6) +
+  geom_text(
+    aes(label = scales::comma(users)),
+    vjust = -0.5, size = 4.2, color = "#1F2937"
+  ) +
+  scale_x_discrete(
+    labels = c("Page View", "View Item", "Add to Cart",
+               "Begin Checkout", "Purchase")
+  ) +
+  scale_y_continuous(
+    labels = scales::comma,
+    expand = expansion(mult = c(0, 0.18))
+  ) +
+  labs(
+    title    = "Distinct users by funnel stage",
+    subtitle = "GA4 Obfuscated Sample — Jan 31, 2021"
+  ) +
   theme_slide()
 ```
 
-------------------------------------------------------------------------
+---
 
 ## Where Users Drop Off {background-color="#F8FAFC"}
 
 ```{r dropoff-table}
 data.frame(
-  Stage     = c("page_view → view_item",
-                "view_item → add_to_cart",
-                "add_to_cart → begin_checkout",
-                "begin_checkout → purchase"),
-  `Drop-off` = c("78.4%", "81.8%", "44.9%", "68.5%"),
-  Priority   = c("Critical", "Critical", "Moderate", "Critical")
+  Transition = c(
+    "page_view → view_item",
+    "view_item → add_to_cart",
+    "add_to_cart → begin_checkout",
+    "begin_checkout → purchase"
+  ),
+  Dropoff  = c("78.4%", "81.8%", "44.9%", "68.5%"),
+  Priority = c("Critical", "Critical", "Moderate", "Critical")
 ) |>
-  kable(align = c("l","c","c"), col.names = c("Transition","Drop-off","Priority")) |>
-  kable_styling(font_size = 18, full_width = TRUE) |>
-  row_spec(c(1,2,4), color = "#a32d2d", bold = TRUE) |>
-  row_spec(3, color = "#b45309")
+  kable(
+    col.names = c("Transition", "Drop-off", "Priority"),
+    align     = c("l", "c", "c")
+  ) |>
+  kable_styling(
+    font_size         = 20,
+    full_width        = TRUE,
+    bootstrap_options = "basic"
+  ) |>
+  row_spec(c(1, 2, 4), bold = TRUE,
+           color      = "#7F1D1D",
+           background = "#FEF2F2") |>
+  row_spec(3,
+           color      = "#78350F",
+           background = "#FFFBEB")
 ```
 
-:::: fragment
-::: callout-important
-**3 of 4 transitions have drop-off rates above 68%**. The product detail page and checkout experience are the two highest-priority fixes.
+::: fragment
+::: {style="background:#FEF2F2; border-left:5px solid #991B1B; padding:11px 16px; margin-top:1em; border-radius:0 8px 8px 0;"}
+**3 of 4 transitions exceed 68% drop-off.** The product page and checkout experience are the two highest-priority fixes.
 :::
-::::
+:::
 
-------------------------------------------------------------------------
+---
 
 ## Attribution Methodology {background-color="#F8FAFC"}
 
-::::: columns
+::: columns
 ::: {.column width="50%"}
-**Approach**
+**Setup**
 
--   Unit: individual user session via `user_pseudo_id`
--   Touchpoints: all 5 funnel events
--   Model: **Markov Chain (Order 1)**
--   Comparison: First-touch & Last-touch heuristics
+- Unit: individual user session via `user_pseudo_id`
+- Touchpoints: all 5 funnel events
+- Package: `ChannelAttribution` in R
+
+<br>
+
+**Path defined as:**
+
+`page_view` → `view_item` → `add_to_cart` → `begin_checkout` → `purchase`
 :::
 
 ::: {.column width="50%"}
 **Why Markov Chain?**
 
-| Model       | Limitation                     |
-|-------------|--------------------------------|
-| First-touch | Ignores everything after entry |
-| Last-touch  | Over-credits final step        |
-| **Markov**  | Accounts for full journey      |
-:::
-:::::
+| Model | Weakness |
+|:--|:--|
+| First-touch | Ignores all steps after entry |
+| Last-touch | Over-credits the final step |
+| **Markov Chain** | Accounts for full journey |
 
-------------------------------------------------------------------------
+<br>
+
+Markov uses a **removal effect** — it measures how much conversion probability drops when each stage is removed from the path.
+:::
+:::
+
+---
 
 ## Attribution Results {background-color="#F8FAFC"}
 
-```{r markov-chart, fig.width=8, fig.height=4.2}
+```{r markov-chart}
+#| fig-width: 8
+#| fig-height: 4
+#| fig-alt: "Horizontal bar chart of Markov chain attribution. page_view 26.4%, view_item 25.9%, add_to_cart 21.2%, begin_checkout 15.1%, purchase 11.4%."
+
 table_markov |>
-  mutate(channel = factor(channel, levels = funnel_order)) |>
-  arrange(channel) |>
   ggplot(aes(x = reorder(channel, percent), y = percent)) +
-  geom_col(fill = C_BLUE, width = 0.6) +
-  geom_text(aes(label = paste0(percent, "%")),
-            hjust = -0.1, size = 4, color = "#374151") +
+  geom_col(fill = BLUE, width = 0.6) +
+  geom_text(
+    aes(label = paste0(percent, "%")),
+    hjust = -0.15, size = 4.2, color = "#1F2937"
+  ) +
   coord_flip() +
-  scale_y_continuous(limits = c(0, 35),
-                     expand  = expansion(mult = c(0, 0.05))) +
-  scale_x_discrete(labels = c("purchase"       = "Purchase",
-                               "begin_checkout" = "Begin Checkout",
-                               "add_to_cart"    = "Add to Cart",
-                               "view_item"      = "View Item",
-                               "page_view"      = "Page View")) +
-  labs(title    = "Markov chain attribution — % share per stage",
-       subtitle = "Credit distributed based on removal effect") +
+  scale_x_discrete(labels = c(
+    "page_view"      = "Page View",
+    "view_item"      = "View Item",
+    "add_to_cart"    = "Add to Cart",
+    "begin_checkout" = "Begin Checkout",
+    "purchase"       = "Purchase"
+  )) +
+  scale_y_continuous(
+    limits = c(0, 34),
+    expand = expansion(mult = c(0, 0.08))
+  ) +
+  labs(
+    title    = "Markov chain attribution — % share per stage",
+    subtitle = "Credit distributed based on removal effect"
+  ) +
   theme_slide()
 ```
 
 ::: fragment
-`page_view` + `view_item` account for **52.3%** of total conversion credit — the top of the funnel matters most.
+::: {style="background:#DBEAFE; border-left:5px solid #1E3A5F; padding:10px 16px; border-radius:0 8px 8px 0;"}
+`page_view` + `view_item` together account for **52.3%** of total conversion credit.
+:::
 :::
 
-------------------------------------------------------------------------
+---
 
-## Model Comparison {background-color="#F8FAFC"}
+## Attribution Model Comparison {background-color="#F8FAFC"}
 
-```{r model-comparison-chart, fig.width=9, fig.height=4.2}
-comparison <- data.frame(
-  channel  = rep(c("Page View","View Item","Add to Cart",
-                   "Begin Checkout","Purchase"), 3),
-  model    = rep(c("First-Touch","Last-Touch","Markov"), each = 5),
-  value    = c(100, 0, 0, 0, 0,
-               0, 82.4, 11.8, 5.9, 0,
-               26.4, 25.9, 21.2, 15.1, 11.4)
+```{r model-comparison}
+#| fig-width: 9
+#| fig-height: 4
+#| fig-alt: "Stacked bar chart comparing First-Touch, Last-Touch, and Markov attribution. First-touch gives 100% to page_view. Last-touch gives 82% to view_item. Markov distributes evenly across all five stages."
+
+data.frame(
+  channel = rep(c("Page View","View Item","Add to Cart",
+                  "Begin Checkout","Purchase"), 3),
+  model   = rep(c("First-Touch","Last-Touch","Markov"), each = 5),
+  value   = c(
+    100,  0,    0,    0,    0,
+    0,   82.4, 11.8,  5.9,  0,
+    26.4, 25.9, 21.2, 15.1, 11.4
+  )
 ) |>
   mutate(
     channel = factor(channel,
-                     levels = c("Page View","View Item","Add to Cart",
-                                "Begin Checkout","Purchase")),
+                     levels = rev(c("Page View","View Item","Add to Cart",
+                                    "Begin Checkout","Purchase"))),
     model   = factor(model, levels = c("First-Touch","Last-Touch","Markov"))
-  )
-
-ggplot(comparison, aes(x = model, y = value, fill = channel)) +
+  ) |>
+  ggplot(aes(x = model, y = value, fill = channel)) +
   geom_col(position = "fill", width = 0.55) +
   scale_y_continuous(labels = percent_format()) +
   scale_fill_manual(values = c(
-    "Page View"      = "#2563EB",
-    "View Item"      = "#059669",
-    "Add to Cart"    = "#7C3AED",
-    "Begin Checkout" = "#D97706",
-    "Purchase"       = "#9CA3AF"
+    "Page View"      = "#1E3A5F",
+    "View Item"      = "#2563EB",
+    "Add to Cart"    = "#60A5FA",
+    "Begin Checkout" = "#93C5FD",
+    "Purchase"       = "#BFDBFE"
   )) +
-  labs(title = "Attribution model comparison",
-       x = NULL, y = "Share", fill = NULL) +
+  labs(
+    title = "Attribution model comparison — share by funnel stage",
+    x     = NULL,
+    y     = "Share of attributed conversions",
+    fill  = NULL
+  ) +
   theme_slide() +
-  theme(legend.position = "right",
-        legend.text = element_text(size = 11))
+  theme(
+    legend.position = "right",
+    legend.text     = element_text(size = 12),
+    legend.key.size = unit(0.65, "cm")
+  )
 ```
 
-------------------------------------------------------------------------
+---
 
 ## Recommendations {background-color="#F8FAFC"}
 
-:::::: columns
+::: columns
 ::: {.column width="33%"}
+::: {style="background:#EFF6FF; border-top:4px solid #1E3A5F; border-radius:0 0 8px 8px; padding:14px; font-size:0.95em;"}
 **1. Fix landing page**
 
 78.4% of users never view a product
 
--   Featured products above the fold
--   Improve search & navigation
--   A/B test homepage layout
+- Featured items above the fold
+- Improve search & navigation
+- A/B test homepage layout
 
-*+250 users into funnel*
+*Est. +250 users into funnel*
+:::
 :::
 
 ::: {.column width="33%"}
+::: {style="background:#EFF6FF; border-top:4px solid #2563EB; border-radius:0 0 8px 8px; padding:14px; font-size:0.95em;"}
 **2. Optimize product pages**
 
 81.8% who view a product don't add to cart
 
--   Add reviews & urgency signals
--   Rewrite benefit-led copy
--   A/B test CTA placement
+- Add reviews & urgency signals
+- Benefit-led copy
+- A/B test CTA placement
 
-*+54 add-to-cart users*
+*Est. +54 add-to-cart users*
+:::
 :::
 
 ::: {.column width="33%"}
+::: {style="background:#EFF6FF; border-top:4px solid #60A5FA; border-radius:0 0 8px 8px; padding:14px; font-size:0.95em;"}
 **3. Reduce checkout friction**
 
 68.5% abandon at checkout
 
--   Guest checkout
--   Fewer form fields
--   Trust badges + mobile optimization
+- Enable guest checkout
+- Reduce form fields
+- Trust badges + mobile UX
 
-*CVR: 0.7% → 1.1%*
+*CVR: 0.7% → ~1.1%*
 :::
-::::::
+:::
+:::
 
-------------------------------------------------------------------------
+---
 
-## Limitations & Caveats {background-color="#FFF7ED"}
+## Limitations {background-color="#F8FAFC"}
 
 ::: incremental
--   **Single-day snapshot** — findings cannot account for seasonal variation, day-of-week effects, or campaign cycles. All results are directional.
--   **Anonymized users** — `user_pseudo_id` does not persist across devices. Distinct user count is inflated; true CVR is likely higher than 0.7%.
--   **No channel data** — cannot determine whether paid, organic, or direct traffic converts differently.
--   **Small sample** — 17 purchases carries high statistical uncertainty. Validate across 30+ days before acting.
--   **Shapley values undefined** — all converting users took identical paths, leaving no variation to calculate marginal contribution.
+- **Single-day snapshot** — results cannot account for seasonal variation, day-of-week effects, or campaign cycles. All findings are directional only.
+- **Anonymized users** — `user_pseudo_id` does not persist across devices, inflating distinct user counts and deflating true CVR.
+- **No channel or campaign data** — cannot separate paid, organic, or direct traffic performance.
+- **Small purchase sample** — 17 completed purchases carry high statistical uncertainty. Validate across 30+ days before taking action.
+- **Shapley values undefined** — all 17 converting users took identical paths, leaving no variation to compute marginal channel contribution.
 :::
 
-------------------------------------------------------------------------
+---
 
-## Next Steps {background-color="#F0FDF4"}
+## Next Steps {background-color="#F8FAFC"}
 
-::::: columns
-::: {.column width="50%"}
+::: columns
+::: {.column width="33%"}
+::: {style="background:#EFF6FF; border-top:4px solid #1E3A5F; border-radius:0 0 8px 8px; padding:14px;"}
 **Short term (0–30 days)**
 
--   Implement homepage A/B test
--   Add reviews to top 10 product pages
--   Enable guest checkout
+- Implement homepage A/B test
+- Add reviews to top 10 product pages
+- Enable guest checkout
+:::
+:::
 
+::: {.column width="33%"}
+::: {style="background:#EFF6FF; border-top:4px solid #2563EB; border-radius:0 0 8px 8px; padding:14px;"}
 **Medium term (30–90 days)**
 
--   Collect 30 days of data for reanalysis
--   Implement consistent `user_id` tagging
+- Collect 30 days of data for reanalysis
+- Implement consistent `user_id` tagging in GA4
+- Connect campaign source data to sessions
+:::
 :::
 
-::: {.column width="50%"}
+::: {.column width="33%"}
+::: {style="background:#EFF6FF; border-top:4px solid #60A5FA; border-radius:0 0 8px 8px; padding:14px;"}
 **Long term (90+ days)**
 
--   Integrate CRM + campaign data into BigQuery
--   Run full multi-touch Markov attribution with 100+ conversions
--   Build channel-level ROI model to guide budget allocation
+- Integrate CRM + campaign data into BigQuery
+- Run full Markov attribution with 100+ conversions
+- Build channel-level ROI model to guide ad spend
 :::
-:::::
+:::
+:::
 
-------------------------------------------------------------------------
+---
 
-## Summary {background-color="#1E3A5F"}
+## Summary {background-color="#F8FAFC"}
 
-::::: columns
-::: {.column width="60%"}
+::: columns
+::: {.column width="55%"}
 **What we found**
 
--   CVR of just 0.7% from 2,546 users
--   Largest drop: `view_item → add_to_cart` at 81.8%
--   Top of funnel carries 52% of Markov attribution credit
+- CVR of just 0.7% from 2,546 users on a single day
+- Largest drop-off: `view_item → add_to_cart` at 81.8%
+- Top two funnel stages carry 52% of Markov attribution credit
+
+<br>
 
 **What we recommend**
 
-1.  Fix the landing-to-product discovery drop
-2.  Optimize the product detail page
-3.  Remove checkout friction
+1. Fix the landing-to-product discovery gap
+2. Optimize the product detail page experience
+3. Remove checkout friction — CVR can reach ~1.1%
 :::
 
-::: {.column width="40%"}
+::: {.column width="45%"}
 **Deliverables**
 
--   Looker Studio Dashboard
--   Quarto Reproducible Report
--   This Presentation
+- Looker Studio Dashboard
+- Quarto Reproducible Report
+- This Presentation
 
-**Repository**
+<br>
 
-[github.com/MattPradoCalPoly/project-IBM6530](https://github.com/MattPradoCalPoly/project-IBM6530)
+**Data**
+
+- GA4 Obfuscated Sample via BigQuery
+- Single-day snapshot: Jan 31, 2021
+
+<br>
+
 :::
-:::::
+:::
 
-------------------------------------------------------------------------
+---
 
-##  {background-color="#1E3A5F"}
+## Thank You {background-color="#1E3A5F"}
 
-::: {style="text-align: center; padding-top: 80px;"}
-# Thank You
+::: {style="text-align:center; padding-top:60px; color:white;"}
 
-**Questions?**
+**Questions & Discussion**
 
+<br>
+
+::: {style="font-size:0.9em; color:#CBD5E1;"}
 Bansi Khachar · Matthew Prado · Lucynda Young · Saurabh Parate
 
-*IBM 6530 · Cal Poly Pomona*
+IBM 6530 · Cal Poly Pomona
+:::
+
+<br>
+
+::: {style="font-size:0.8em; color:#93C5FD;"}
+[github.com/MattPradoCalPoly/project-IBM6530](https://github.com/MattPradoCalPoly/project-IBM6530)
+:::
+
 :::
