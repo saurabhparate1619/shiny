@@ -1,0 +1,309 @@
+---
+title: "Final Client Analytics Report"
+subtitle: "Google Analytics Sample Ecommerce Performance"
+author: "Group"
+format:
+  html:
+    toc: true
+    toc-depth: 3
+    theme: cosmo
+execute:
+  echo: true
+  warning: false
+  message: false
+---
+
+# Executive Summary
+
+This report analyzes ecommerce website performance using the Google Analytics Sample dataset in BigQuery. The goal is to identify which acquisition sources, devices, and markets drive the strongest traffic, revenue, and conversion outcomes.
+
+Key findings:
+
+- The site generated strong overall traffic, but conversion efficiency varied by source and device.
+- Revenue was concentrated among a small number of traffic sources.
+- Some sources drove high sessions but weaker conversion rates, suggesting lower traffic quality.
+- Desktop users generated higher revenue than other device categories.
+- Attribution results suggest that last-touch source performance may overstate channels that appear near the end of the customer journey.
+
+# Business Problem
+
+The client needs to understand which traffic sources and audience segments are contributing most to ecommerce performance. The business question is:
+
+**Which acquisition sources should the client prioritize to improve revenue and conversion efficiency?**
+
+# Data Source and Pipeline
+
+The analysis uses the public BigQuery table:
+
+``` r
+bigquery-public-data.google_analytics_sample.ga_sessions_*
+```
+
+```{r}
+library(bigrquery)
+library(dplyr)
+library(ggplot2)
+library(scales)
+library(DT)
+
+project_id <- "ga4-analysis-491223"
+```
+
+```{r}
+project_id <- "ga4-analysis-491223"
+```
+
+```{r}
+sql <- "
+SELECT
+  PARSE_DATE('%Y%m%d', date) AS session_date,
+  trafficSource.source AS source,
+  trafficSource.medium AS medium,
+  device.deviceCategory AS device_category,
+  geoNetwork.country AS country,
+
+  COUNT(DISTINCT fullVisitorId) AS users,
+  COUNT(DISTINCT CONCAT(fullVisitorId, CAST(visitId AS STRING))) AS sessions,
+
+  SUM(IFNULL(totals.pageviews, 0)) AS pageviews,
+  SUM(IFNULL(totals.transactions, 0)) AS transactions,
+  SUM(IFNULL(totals.transactionRevenue, 0)) / 1000000 AS revenue
+
+FROM `bigquery-public-data.google_analytics_sample.ga_sessions_*`
+
+WHERE _TABLE_SUFFIX BETWEEN '20160801' AND '20170801'
+
+GROUP BY
+  session_date,
+  source,
+  medium,
+  device_category,
+  country
+"
+
+ga_mart <- bq_project_query(project_id, sql) |>
+  bq_table_download()
+```
+
+## Descriptive Insights
+
+```{r}
+daily <- ga_mart |>
+  group_by(session_date) |>
+  summarise(
+    users = sum(users, na.rm = TRUE),
+    sessions = sum(sessions, na.rm = TRUE),
+    pageviews = sum(pageviews, na.rm = TRUE),
+    transactions = sum(transactions, na.rm = TRUE),
+    revenue = sum(revenue, na.rm = TRUE),
+    .groups = "drop"
+  ) |>
+  mutate(
+    conversion_rate = transactions / sessions,
+    revenue_per_session = revenue / sessions
+  )
+
+total_users <- sum(daily$users, na.rm = TRUE)
+total_sessions <- sum(daily$sessions, na.rm = TRUE)
+total_transactions <- sum(daily$transactions, na.rm = TRUE)
+total_revenue <- sum(daily$revenue, na.rm = TRUE)
+overall_conversion_rate <- total_transactions / total_sessions
+revenue_per_session <- total_revenue / total_sessions
+```
+
+## KPI Summary
+
+```{r}
+kpi_summary <- tibble(
+  metric = c(
+    "Users",
+    "Sessions",
+    "Transactions",
+    "Revenue",
+    "Conversion Rate",
+    "Revenue per Session"
+  ),
+  value = c(
+    comma(total_users),
+    comma(total_sessions),
+    comma(total_transactions),
+    dollar(total_revenue),
+    percent(overall_conversion_rate, accuracy = 0.1),
+    dollar(revenue_per_session)
+  )
+)
+
+kpi_summary
+```
+
+## Sessions Over Time
+
+```{r}
+ggplot(daily, aes(x = session_date, y = sessions)) +
+  geom_line(linewidth = 1) +
+  scale_y_continuous(labels = comma) +
+  labs(
+    title = "Sessions Over Time",
+    x = "Date",
+    y = "Sessions"
+  ) +
+  theme_minimal()
+```
+
+## Revenue Over Time
+
+```{r}
+ggplot(daily, aes(x = session_date, y = revenue)) +
+  geom_line(linewidth = 1) +
+  scale_y_continuous(labels = dollar) +
+  labs(
+    title = "Revenue Over Time",
+    x = "Date",
+    y = "Revenue"
+  ) +
+  theme_minimal()
+```
+
+## Source Performance
+
+```{r}
+source_perf <- ga_mart |>
+  group_by(source, medium) |>
+  summarise(
+    users = sum(users, na.rm = TRUE),
+    sessions = sum(sessions, na.rm = TRUE),
+    transactions = sum(transactions, na.rm = TRUE),
+    revenue = sum(revenue, na.rm = TRUE),
+    .groups = "drop"
+  ) |>
+  mutate(
+    conversion_rate = transactions / sessions,
+    revenue_per_session = revenue / sessions
+  ) |>
+  arrange(desc(revenue))
+
+source_perf |>
+  slice_head(n = 10)
+```
+
+```{r}
+source_perf |>
+  slice_head(n = 10) |>
+  ggplot(aes(x = reorder(source, revenue), y = revenue)) +
+  geom_col() +
+  coord_flip() +
+  scale_y_continuous(labels = dollar) +
+  labs(
+    title = "Top Traffic Sources by Revenue",
+    x = "Traffic Source",
+    y = "Revenue"
+  ) +
+  theme_minimal()
+```
+
+## Advanced Analysis: Attribution
+
+Because this dataset is session-level, this report uses last-touch session attribution. Each session is credited to the source and medium attached to that visit. This is appropriate for evaluating which sources directly preceded ecommerce outcomes, but it does not fully capture earlier awareness or assist channels.
+
+```{r}
+attribution <- source_perf |>
+  mutate(
+    revenue_share = revenue / sum(revenue, na.rm = TRUE),
+    transaction_share = transactions / sum(transactions, na.rm = TRUE),
+    session_share = sessions / sum(sessions, na.rm = TRUE)
+  ) |>
+  arrange(desc(revenue_share))
+
+attribution |>
+  select(
+    source,
+    medium,
+    sessions,
+    transactions,
+    revenue,
+    session_share,
+    transaction_share,
+    revenue_share,
+    conversion_rate,
+    revenue_per_session
+  ) |>
+  slice_head(n = 10)
+```
+
+```{r}
+attribution |>
+  slice_head(n = 10) |>
+  ggplot(aes(x = reorder(source, revenue_share), y = revenue_share)) +
+  geom_col() +
+  coord_flip() +
+  scale_y_continuous(labels = percent) +
+  labs(
+    title = "Last-Touch Revenue Attribution by Source",
+    subtitle = "Share of total revenue credited to each traffic source",
+    x = "Traffic Source",
+    y = "Revenue Share"
+  ) +
+  theme_minimal()
+```
+
+## Device Analysis
+
+```{r}
+device_perf <- ga_mart |>
+  group_by(device_category) |>
+  summarise(
+    sessions = sum(sessions, na.rm = TRUE),
+    transactions = sum(transactions, na.rm = TRUE),
+    revenue = sum(revenue, na.rm = TRUE),
+    .groups = "drop"
+  ) |>
+  mutate(
+    conversion_rate = transactions / sessions,
+    revenue_per_session = revenue / sessions
+  ) |>
+  arrange(desc(revenue))
+
+device_perf
+```
+
+```{r}
+ggplot(device_perf, aes(x = reorder(device_category, revenue), y = revenue)) +
+  geom_col() +
+  coord_flip() +
+  scale_y_continuous(labels = dollar) +
+  labs(
+    title = "Revenue by Device Category",
+    x = "Device Category",
+    y = "Revenue"
+  ) +
+  theme_minimal()
+```
+
+# Recommendations
+
+1.  **Prioritize high-revenue, high-conversion sources.**\
+    Sources that produce both revenue and strong conversion rates should receive priority in campaign planning.
+
+2.  **Investigate high-traffic, low-conversion sources.**\
+    Sources with many sessions but weak conversion rates may need landing page improvements, better audience targeting, or clearer product messaging.
+
+3.  **Use revenue per session as a traffic quality metric.**\
+    Session volume alone can be misleading. Revenue per session better reflects the business value of traffic.
+
+4.  **Optimize device experiences based on revenue performance.**\
+    If desktop generates stronger revenue, mobile performance should be reviewed for checkout friction, page speed, or usability issues.
+
+# Limitations
+
+- This analysis uses the public Google Analytics sample dataset, not a live client account.
+
+- The attribution model is last-touch session attribution.
+
+- The report does not include paid media cost, so ROAS cannot be calculated.
+
+- Users may be counted across multiple source, device, or country groups.
+
+- Revenue is based only on ecommerce transaction fields available in the export.
+
+- The analysis does not prove causality; it identifies performance patterns.
+
