@@ -1,0 +1,332 @@
+---
+title: "Ecommerce Performance Report"
+subtitle: "Executive Summary · Aug 2016 – Aug 2017"
+format:
+  dashboard:
+    orientation: rows
+    scrolling: true
+    theme: cosmo
+execute:
+  echo: false
+  warning: false
+  message: false
+---
+
+```{r setup}
+library(bigrquery)
+library(dplyr)
+library(ggplot2)
+library(scales)
+library(DT)
+library(bslib)
+library(bsicons)
+
+project_id <- "ga4-analysis-491223"
+
+sql <- "
+SELECT
+  PARSE_DATE('%Y%m%d', date) AS session_date,
+  trafficSource.source AS source,
+  trafficSource.medium AS medium,
+  device.deviceCategory AS device_category,
+  geoNetwork.country AS country,
+  COUNT(DISTINCT fullVisitorId) AS users,
+  COUNT(DISTINCT CONCAT(fullVisitorId, CAST(visitId AS STRING))) AS sessions,
+  SUM(IFNULL(totals.pageviews, 0)) AS pageviews,
+  SUM(IFNULL(totals.transactions, 0)) AS transactions,
+  SUM(IFNULL(totals.transactionRevenue, 0)) / 1000000 AS revenue
+FROM `bigquery-public-data.google_analytics_sample.ga_sessions_*`
+WHERE _TABLE_SUFFIX BETWEEN '20160801' AND '20170801'
+GROUP BY session_date, source, medium, device_category, country
+"
+
+ga_mart <- bq_project_query(project_id, sql) |>
+  bq_table_download()
+
+# ── Aggregations ──────────────────────────────────────────────────
+
+daily <- ga_mart |>
+  group_by(session_date) |>
+  summarise(
+    users        = sum(users, na.rm = TRUE),
+    sessions     = sum(sessions, na.rm = TRUE),
+    transactions = sum(transactions, na.rm = TRUE),
+    revenue      = sum(revenue, na.rm = TRUE),
+    .groups      = "drop"
+  ) |>
+  mutate(
+    conversion_rate     = transactions / sessions,
+    revenue_per_session = revenue / sessions
+  )
+
+source_perf <- ga_mart |>
+  group_by(source, medium) |>
+  summarise(
+    sessions     = sum(sessions, na.rm = TRUE),
+    transactions = sum(transactions, na.rm = TRUE),
+    revenue      = sum(revenue, na.rm = TRUE),
+    .groups      = "drop"
+  ) |>
+  mutate(conversion_rate = transactions / sessions) |>
+  arrange(desc(revenue)) |>
+  slice_head(n = 8)
+
+device_perf <- ga_mart |>
+  group_by(device_category) |>
+  summarise(
+    sessions     = sum(sessions, na.rm = TRUE),
+    transactions = sum(transactions, na.rm = TRUE),
+    revenue      = sum(revenue, na.rm = TRUE),
+    .groups      = "drop"
+  ) |>
+  mutate(
+    conversion_rate = transactions / sessions,
+    revenue_share   = revenue / sum(revenue)
+  )
+
+country_perf <- ga_mart |>
+  group_by(country) |>
+  summarise(
+    sessions     = sum(sessions, na.rm = TRUE),
+    transactions = sum(transactions, na.rm = TRUE),
+    revenue      = sum(revenue, na.rm = TRUE),
+    .groups      = "drop"
+  ) |>
+  arrange(desc(revenue)) |>
+  slice_head(n = 8)
+
+# ── KPIs ─────────────────────────────────────────────────────────
+total_revenue      <- sum(daily$revenue)
+total_transactions <- sum(daily$transactions)
+total_sessions     <- sum(daily$sessions)
+overall_cvr        <- total_transactions / total_sessions
+rev_per_session    <- total_revenue / total_sessions
+
+# ── Shared theme ─────────────────────────────────────────────────
+theme_exec <- function() {
+  theme_minimal(base_size = 12) +
+    theme(
+      plot.title         = element_text(size = 12, face = "bold",
+                                        color = "#111827", margin = margin(b = 3)),
+      plot.subtitle      = element_text(size = 10, color = "#6B7280",
+                                        margin = margin(b = 10)),
+      axis.text          = element_text(size = 9, color = "#9CA3AF"),
+      axis.title         = element_blank(),
+      panel.grid.major.x = element_blank(),
+      panel.grid.major.y = element_line(color = "#F3F4F6", linewidth = 0.5),
+      panel.grid.minor   = element_blank(),
+      plot.background    = element_rect(fill = "white", color = NA),
+      panel.background   = element_rect(fill = "white", color = NA),
+      plot.margin        = margin(12, 16, 8, 16)
+    )
+}
+
+C_BLUE   <- "#2563EB"
+C_GREEN  <- "#059669"
+C_PURPLE <- "#7C3AED"
+C_AMBER  <- "#D97706"
+```
+
+# Overview
+
+## Row {height="18%"}
+
+```{r}
+value_box(
+  title    = "Total Revenue",
+  value    = dollar(total_revenue, big.mark = ","),
+  showcase = bs_icon("currency-dollar"),
+  theme    = value_box_theme(bg = "#EFF6FF", fg = "#1D4ED8")
+)
+```
+
+```{r}
+value_box(
+  title    = "Transactions",
+  value    = comma(total_transactions),
+  showcase = bs_icon("bag-check-fill"),
+  theme    = value_box_theme(bg = "#F0FDF4", fg = "#065F46")
+)
+```
+
+```{r}
+value_box(
+  title    = "Conversion Rate",
+  value    = percent(overall_cvr, accuracy = 0.1),
+  showcase = bs_icon("graph-up-arrow"),
+  theme    = value_box_theme(bg = "#FAF5FF", fg = "#6D28D9")
+)
+```
+
+```{r}
+value_box(
+  title    = "Revenue / Session",
+  value    = dollar(rev_per_session, accuracy = 0.01),
+  showcase = bs_icon("lightning-charge-fill"),
+  theme    = value_box_theme(bg = "#FFFBEB", fg = "#92400E")
+)
+```
+
+```{r}
+value_box(
+  title    = "Total Sessions",
+  value    = comma(total_sessions),
+  showcase = bs_icon("cursor-fill"),
+  theme    = value_box_theme(bg = "#F0F9FF", fg = "#0369A1")
+)
+```
+
+## Row {height="42%"}
+
+```{r}
+#| title: "Revenue trend"
+ggplot(daily, aes(x = session_date, y = revenue)) +
+  geom_area(fill = C_BLUE, alpha = 0.10) +
+  geom_line(color = C_BLUE, linewidth = 1.1) +
+  scale_y_continuous(labels = dollar,
+                     expand  = expansion(mult = c(0, 0.12))) +
+  scale_x_date(date_labels = "%b %Y", date_breaks = "2 months") +
+  labs(title    = "Daily revenue",
+       subtitle = "Ecommerce revenue over the full period") +
+  theme_exec()
+```
+
+```{r}
+#| title: "Conversion rate trend"
+ggplot(daily, aes(x = session_date, y = conversion_rate)) +
+  geom_area(fill = C_GREEN, alpha = 0.10) +
+  geom_line(color = C_GREEN, linewidth = 1.1) +
+  scale_y_continuous(labels = percent_format(accuracy = 0.1),
+                     expand  = expansion(mult = c(0, 0.12))) +
+  scale_x_date(date_labels = "%b %Y", date_breaks = "2 months") +
+  labs(title    = "Conversion rate",
+       subtitle = "Transactions divided by sessions per day") +
+  theme_exec()
+```
+
+## Row {height="40%"}
+
+```{r}
+#| title: "Top channels by revenue"
+ggplot(source_perf, aes(x = reorder(source, revenue), y = revenue)) +
+  geom_col(fill = C_BLUE, width = 0.6) +
+  geom_text(aes(label = dollar(round(revenue))),
+            hjust = -0.1, size = 3, color = "#6B7280") +
+  coord_flip() +
+  scale_y_continuous(labels = dollar,
+                     expand  = expansion(mult = c(0, 0.22))) +
+  labs(title    = "Revenue by channel",
+       subtitle = "Top 8 acquisition sources") +
+  theme_exec()
+```
+
+```{r}
+#| title: "Conversion rate by channel"
+ggplot(source_perf,
+       aes(x = reorder(source, conversion_rate), y = conversion_rate)) +
+  geom_col(fill = C_PURPLE, width = 0.6) +
+  geom_text(aes(label = percent(conversion_rate, accuracy = 0.1)),
+            hjust = -0.1, size = 3, color = "#6B7280") +
+  coord_flip() +
+  scale_y_continuous(labels = percent_format(accuracy = 0.1),
+                     expand  = expansion(mult = c(0, 0.22))) +
+  labs(title    = "Conversion rate by channel",
+       subtitle = "Which sources drive the most efficient traffic") +
+  theme_exec()
+```
+
+# Audience Breakdown
+
+## Row {height="50%"}
+
+```{r}
+#| title: "Revenue share by device"
+ggplot(device_perf,
+       aes(x = reorder(device_category, revenue_share),
+           y = revenue_share, fill = device_category)) +
+  geom_col(width = 0.5, show.legend = FALSE) +
+  geom_text(aes(label = percent(revenue_share, accuracy = 0.1)),
+            hjust = -0.1, size = 4, color = "#6B7280") +
+  scale_fill_manual(values = c(
+    "desktop" = C_BLUE,
+    "mobile"  = C_GREEN,
+    "tablet"  = C_PURPLE
+  )) +
+  coord_flip() +
+  scale_y_continuous(labels = percent_format(accuracy = 1),
+                     expand  = expansion(mult = c(0, 0.2))) +
+  labs(title    = "Revenue share by device",
+       subtitle = "% of total revenue from each device type") +
+  theme_exec()
+```
+
+```{r}
+#| title: "Conversion rate by device"
+ggplot(device_perf,
+       aes(x = reorder(device_category, conversion_rate),
+           y = conversion_rate, fill = device_category)) +
+  geom_col(width = 0.5, show.legend = FALSE) +
+  geom_text(aes(label = percent(conversion_rate, accuracy = 0.1)),
+            hjust = -0.1, size = 4, color = "#6B7280") +
+  scale_fill_manual(values = c(
+    "desktop" = C_BLUE,
+    "mobile"  = C_GREEN,
+    "tablet"  = C_PURPLE
+  )) +
+  coord_flip() +
+  scale_y_continuous(labels = percent_format(accuracy = 0.1),
+                     expand  = expansion(mult = c(0, 0.2))) +
+  labs(title    = "Conversion rate by device",
+       subtitle = "Which device types convert best") +
+  theme_exec()
+```
+
+## Row {height="50%"}
+
+```{r}
+#| title: "Top 8 markets by revenue"
+ggplot(country_perf, aes(x = reorder(country, revenue), y = revenue)) +
+  geom_col(fill = C_AMBER, width = 0.65) +
+  geom_text(aes(label = dollar(round(revenue))),
+            hjust = -0.1, size = 3, color = "#6B7280") +
+  coord_flip() +
+  scale_y_continuous(labels = dollar,
+                     expand  = expansion(mult = c(0, 0.22))) +
+  labs(title    = "Top 8 markets by revenue",
+       subtitle = "Highest-value geographic regions") +
+  theme_exec()
+```
+
+```{r}
+#| title: "Channel performance summary"
+source_perf |>
+  select(source, medium, sessions, transactions, revenue, conversion_rate) |>
+  mutate(
+    revenue         = dollar(round(revenue)),
+    conversion_rate = percent(conversion_rate, accuracy = 0.1),
+    sessions        = comma(sessions)
+  ) |>
+  datatable(
+    colnames = c("Source", "Medium", "Sessions",
+                 "Transactions", "Revenue", "Conv. Rate"),
+    rownames = FALSE,
+    options  = list(
+      pageLength   = 8,
+      dom          = "t",
+      scrollX      = FALSE,
+      initComplete = JS("
+        function(settings, json) {
+          $(this.api().table().header()).css({
+            'background-color': '#F9FAFB',
+            'color': '#374151',
+            'font-size': '11px',
+            'font-weight': '600'
+          });
+          $(this.api().table().node()).css('font-size', '12px');
+        }
+      ")
+    ),
+    class = "stripe hover compact"
+  )
+```
+
