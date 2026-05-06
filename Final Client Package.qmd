@@ -12,8 +12,6 @@ execute:
   message: false
 ---
 
-
-
 ```{r setup}
 library(bigrquery)
 library(dplyr)
@@ -304,7 +302,4 @@ ggplot(country_perf, aes(x = reorder(country, revenue), y = revenue)) +
   theme_minimal()
 ```
 
-```{r}
-getwd()
-```
 

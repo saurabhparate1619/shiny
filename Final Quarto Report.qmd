@@ -1,7 +1,7 @@
 ---
 title: "Final Client Analytics Report"
 subtitle: "Google Analytics Sample Ecommerce Performance"
-author: "Group"
+author: "Group Ontario Airport"
 format:
   html:
     toc: true
