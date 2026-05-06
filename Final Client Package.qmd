@@ -1,0 +1,310 @@
+---
+title: "Google Analytics Client Dashboard"
+subtitle: "Traffic, Revenue, and Conversion Performance"
+format: 
+  dashboard:
+    orientation: rows
+    scrolling: true
+    theme: cosmo
+execute:
+  echo: false
+  warning: false
+  message: false
+---
+
+
+
+```{r setup}
+library(bigrquery)
+library(dplyr)
+library(ggplot2)
+library(scales)
+library(DT)
+library(bslib)
+
+project_id <- "ga4-analysis-491223"
+
+sql <- "
+SELECT
+  PARSE_DATE('%Y%m%d', date) AS session_date,
+  trafficSource.source AS source,
+  trafficSource.medium AS medium,
+  device.deviceCategory AS device_category,
+  geoNetwork.country AS country,
+
+  COUNT(DISTINCT fullVisitorId) AS users,
+  COUNT(DISTINCT CONCAT(fullVisitorId, CAST(visitId AS STRING))) AS sessions,
+
+  SUM(IFNULL(totals.pageviews, 0)) AS pageviews,
+  SUM(IFNULL(totals.transactions, 0)) AS transactions,
+  SUM(IFNULL(totals.transactionRevenue, 0)) / 1000000 AS revenue
+
+FROM `bigquery-public-data.google_analytics_sample.ga_sessions_*`
+
+WHERE _TABLE_SUFFIX BETWEEN '20160801' AND '20170801'
+
+GROUP BY
+  session_date,
+  source,
+  medium,
+  device_category,
+  country
+"
+
+ga_mart <- bq_project_query(project_id, sql) |>
+  bq_table_download()
+
+daily <- ga_mart |>
+  group_by(session_date) |>
+  summarise(
+    users = sum(users, na.rm = TRUE),
+    sessions = sum(sessions, na.rm = TRUE),
+    pageviews = sum(pageviews, na.rm = TRUE),
+    transactions = sum(transactions, na.rm = TRUE),
+    revenue = sum(revenue, na.rm = TRUE),
+    .groups = "drop"
+  ) |>
+  mutate(
+    conversion_rate = transactions / sessions,
+    revenue_per_session = revenue / sessions
+  )
+
+source_perf <- ga_mart |>
+  group_by(source, medium) |>
+  summarise(
+    users = sum(users, na.rm = TRUE),
+    sessions = sum(sessions, na.rm = TRUE),
+    pageviews = sum(pageviews, na.rm = TRUE),
+    transactions = sum(transactions, na.rm = TRUE),
+    revenue = sum(revenue, na.rm = TRUE),
+    .groups = "drop"
+  ) |>
+  mutate(
+    conversion_rate = transactions / sessions,
+    revenue_per_session = revenue / sessions
+  ) |>
+  arrange(desc(revenue))
+
+device_perf <- ga_mart |>
+  group_by(device_category) |>
+  summarise(
+    sessions = sum(sessions, na.rm = TRUE),
+    transactions = sum(transactions, na.rm = TRUE),
+    revenue = sum(revenue, na.rm = TRUE),
+    .groups = "drop"
+  ) |>
+  mutate(conversion_rate = transactions / sessions)
+
+country_perf <- ga_mart |>
+  group_by(country) |>
+  summarise(
+    sessions = sum(sessions, na.rm = TRUE),
+    transactions = sum(transactions, na.rm = TRUE),
+    revenue = sum(revenue, na.rm = TRUE),
+    .groups = "drop"
+  ) |>
+  arrange(desc(revenue)) |>
+  slice_head(n = 10)
+
+total_users <- sum(daily$users, na.rm = TRUE)
+total_sessions <- sum(daily$sessions, na.rm = TRUE)
+total_transactions <- sum(daily$transactions, na.rm = TRUE)
+total_revenue <- sum(daily$revenue, na.rm = TRUE)
+overall_conversion_rate <- total_transactions / total_sessions
+revenue_per_session <- total_revenue / total_sessions
+```
+
+# Executive Summary
+
+## Row {.valuebox-row}
+
+```{r}
+value_box(
+  title = "Total Users",
+  value = comma(total_users)
+)
+```
+
+```{r}
+value_box(
+  title = "Total Sessions",
+  value = comma(total_sessions)
+)
+```
+
+```{r}
+value_box(
+  title = "Transactions",
+  value = comma(total_transactions)
+)
+```
+
+```{r}
+value_box(
+  title = "Revenue",
+  value = dollar(total_revenue)
+)
+```
+
+```{r}
+value_box(
+  title = "Conversion Rate",
+  value = percent(overall_conversion_rate, accuracy = 0.1)
+)
+```
+
+```{r}
+value_box(
+  title = "Revenue / Session",
+  value = dollar(revenue_per_session)
+)
+```
+
+# Performance Trends
+
+## Row
+
+```{r}
+ggplot(daily, aes(x = session_date, y = sessions)) +
+  geom_line(linewidth = 1) +
+  scale_y_continuous(labels = comma) +
+  labs(
+    title = "Sessions Over Time",
+    subtitle = "Traffic volume by day",
+    x = NULL,
+    y = "Sessions"
+  ) +
+  theme_minimal()
+```
+
+```{r}
+ggplot(daily, aes(x = session_date, y = revenue)) +
+  geom_line(linewidth = 1) +
+  scale_y_continuous(labels = dollar) +
+  labs(
+    title = "Revenue Over Time",
+    subtitle = "Daily ecommerce revenue",
+    x = NULL,
+    y = "Revenue"
+  ) +
+  theme_minimal()
+```
+
+## Row
+
+```{r}
+ggplot(daily, aes(x = session_date, y = conversion_rate)) +
+  geom_line(linewidth = 1) +
+  scale_y_continuous(labels = percent) +
+  labs(
+    title = "Conversion Rate Over Time",
+    subtitle = "Transactions divided by sessions",
+    x = NULL,
+    y = "Conversion Rate"
+  ) +
+  theme_minimal()
+```
+
+```{r}
+ggplot(daily, aes(x = session_date, y = revenue_per_session)) +
+  geom_line(linewidth = 1) +
+  scale_y_continuous(labels = dollar) +
+  labs(
+    title = "Revenue per Session Over Time",
+    subtitle = "Revenue efficiency by visit",
+    x = NULL,
+    y = "Revenue per Session"
+  ) +
+  theme_minimal()
+```
+
+# Acquisition Performance
+
+## Row
+
+```{r}
+source_top <- source_perf |>
+  slice_head(n = 10)
+
+ggplot(source_top, aes(x = reorder(source, revenue), y = revenue)) +
+  geom_col() +
+  coord_flip() +
+  scale_y_continuous(labels = dollar) +
+  labs(
+    title = "Top Traffic Sources by Revenue",
+    subtitle = "Revenue contribution by acquisition source",
+    x = NULL,
+    y = "Revenue"
+  ) +
+  theme_minimal()
+```
+
+```{r}
+ggplot(source_top, aes(x = reorder(source, conversion_rate), y = conversion_rate)) +
+  geom_col() +
+  coord_flip() +
+  scale_y_continuous(labels = percent) +
+  labs(
+    title = "Top Traffic Sources by Conversion Rate",
+    subtitle = "Efficiency of traffic sources",
+    x = NULL,
+    y = "Conversion Rate"
+  ) +
+  theme_minimal()
+```
+
+## Row
+
+```{r}
+datatable(
+  source_perf |>
+    mutate(
+      revenue = dollar(revenue),
+      conversion_rate = percent(conversion_rate, accuracy = 0.1),
+      revenue_per_session = dollar(revenue_per_session)
+    ),
+  colnames = c(
+    "Source", "Medium", "Users", "Sessions", "Pageviews",
+    "Transactions", "Revenue", "Conversion Rate", "Revenue per Session"
+  ),
+  options = list(pageLength = 10, scrollX = TRUE),
+  rownames = FALSE
+)
+```
+
+# Device and Geography 
+
+## Row
+
+```{r}
+ggplot(device_perf, aes(x = reorder(device_category, revenue), y = revenue)) +
+  geom_col() +
+  coord_flip() +
+  scale_y_continuous(labels = dollar) +
+  labs(
+    title = "Revenue by Device Category",
+    subtitle = "Desktop, mobile, and tablet performance",
+    x = NULL,
+    y = "Revenue"
+  ) +
+  theme_minimal()
+```
+
+```{r}
+ggplot(country_perf, aes(x = reorder(country, revenue), y = revenue)) +
+  geom_col() +
+  coord_flip() +
+  scale_y_continuous(labels = dollar) +
+  labs(
+    title = "Top Countries by Revenue",
+    subtitle = "Highest-value geographic markets",
+    x = NULL,
+    y = "Revenue"
+  ) +
+  theme_minimal()
+```
+
+```{r}
+getwd()
+```
+
